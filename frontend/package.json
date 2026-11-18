@@ -13,7 +13,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
-  "devDependencies": {
+  "devDependencies": {"@tailwindcss/postcss": "^4",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
