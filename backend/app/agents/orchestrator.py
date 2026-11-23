@@ -136,24 +136,27 @@ class AgentOrchestrator:
 
     # --- Node 2: Planner ---
 
+   
     async def node_planner(self, state: AgentState) -> Dict[str, Any]:
         t0 = time.time()
         query = state["query"]
         qu = state.get("query_understanding", {})
-        sources = qu.get("sources_needed", ["document"])
+        sources = qu.get("sources_needed", [])
+        needs_memory = qu.get("needs_memory", False)
         iter_count = state.get("iteration_count", 0) + 1
 
         subtasks: List[Dict[str, Any]] = []
         task_id = 1
 
-        subtasks.append({
-            "id": f"T{task_id}",
-            "description": "Retrieve user preferences and relevant memory context",
-            "tool": "get_user_memories",
-            "arguments": {"query": query},
-            "status": "pending"
-        })
-        task_id += 1
+        if needs_memory:
+            subtasks.append({
+                "id": f"T{task_id}",
+                "description": "Retrieve user preferences and relevant memory context",
+                "tool": "get_user_memories",
+                "arguments": {"query": query},
+                "status": "pending"
+            })
+            task_id += 1
 
         if "jira" in sources:
             subtasks.append({
@@ -206,7 +209,7 @@ class AgentOrchestrator:
             "stage": "Planning",
             "title": f"Constructed execution plan with {len(subtasks)} subtasks (Pass {iter_count})",
             "status": "completed",
-            "details": f"Planned tools: {', '.join(t['tool'] for t in subtasks)}",
+            "details": f"Planned tools: {', '.join(t['tool'] for t in subtasks) if subtasks else 'No external tools required'}",
             "duration_ms": round((time.time() - t0) * 1000, 2)
         })
 
@@ -677,10 +680,19 @@ class AgentOrchestrator:
 
     # --- Node 6: Verification ---
 
+    
     async def node_verification(self, state: AgentState) -> Dict[str, Any]:
         t0 = time.time()
         draft = state.get("draft_answer", "")
         evidence = state.get("evidence_items", [])
+        errors = state.get("errors", [])
+
+        query_understanding = state.get("query_understanding", {})
+        sources_needed = query_understanding.get("sources_needed", [])
+
+        # General questions do not require document evidence
+        requires_grounding = bool(sources_needed)
+
         evidence_map = {
             e["evidence_id"]: e for e in evidence
         }
@@ -693,26 +705,33 @@ class AgentOrchestrator:
         unsupported_claims = []
         is_supported = len(invalid_citations) == 0
 
-        confidence = (
-            "High"
-            if len(evidence) >= 2 and not invalid_citations
-            else "Moderate"
-        )
+        if not requires_grounding:
+            confidence = "Not applicable (general question)"
+            confidence_explanation = (
+                "General response; external evidence was not required."
+            )
 
-        if not evidence:
-            confidence = "Low (Insufficient evidence available)"
+        else:
+            if len(evidence) >= 2 and not invalid_citations:
+                confidence = "High"
+            elif evidence and not invalid_citations:
+                confidence = "Moderate"
+            else:
+                confidence = "Low (Insufficient evidence available)"
+
+            confidence_explanation = (
+                f"{confidence} confidence based on {len(evidence)} "
+                f"validated sources with {len(invalid_citations)} citation errors."
+            )
 
         report = {
             "is_supported": is_supported,
             "unsupported_claims": unsupported_claims,
             "invalid_citations": invalid_citations,
             "conflicts_detected": [],
-            "missing_info": [e for e in state.get("errors", [])],
+            "missing_info": errors,
             "correction_needed": len(invalid_citations) > 0,
-            "confidence_explanation": (
-                f"{confidence} confidence based on {len(evidence)} "
-                f"validated sources with {len(invalid_citations)} citation errors."
-            )
+            "confidence_explanation": confidence_explanation
         }
 
         timeline = list(state.get("timeline_events", []))
@@ -720,7 +739,7 @@ class AgentOrchestrator:
             "stage": "Verification",
             "title": "Verified factual claims and citations against raw evidence",
             "status": "completed" if is_supported else "warning",
-            "details": report["confidence_explanation"],
+            "details": confidence_explanation,
             "duration_ms": round((time.time() - t0) * 1000, 2)
         })
 
