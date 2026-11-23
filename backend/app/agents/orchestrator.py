@@ -67,26 +67,50 @@ class AgentOrchestrator:
 
     # --- Node 1: Query Understanding ---
 
+   
     async def node_query_understanding(self, state: AgentState) -> Dict[str, Any]:
         t0 = time.time()
         query = state["query"]
-        sources_needed = []
         q_lower = query.lower()
+        sources_needed = []
 
-        if any(w in q_lower for w in ["jira", "issue", "bug", "ticket", "release", "unresolved"]):
+        # Detect integration-specific requests
+        if any(w in q_lower for w in [
+            "jira", "issue", "bug", "ticket", "release", "unresolved"
+        ]):
             sources_needed.append("jira")
 
-        if any(w in q_lower for w in ["notion", "page", "decision", "spec", "meeting", "notes", "doc"]):
+        if any(w in q_lower for w in [
+            "notion", "page", "decision", "spec", "meeting", "notes"
+        ]):
             sources_needed.append("notion")
 
-        if any(w in q_lower for w in ["gmail", "email", "mail", "inbox", "thread", "message from"]):
+        if any(w in q_lower for w in [
+            "gmail", "email", "mail", "inbox", "thread", "message from"
+        ]):
             sources_needed.append("gmail")
 
-        if any(w in q_lower for w in ["document", "pdf", "file", "policy", "handbook", "uploaded"]) or not sources_needed:
+        # Search documents only when the user asks about their documents
+        document_keywords = [
+            "document", "pdf", "file", "policy", "handbook",
+            "uploaded", "my notes", "my document",
+            "in the file", "in the document", "according to the document"
+        ]
+
+        if any(w in q_lower for w in document_keywords):
             sources_needed.append("document")
 
+        # Personal memory is useful for personal/contextual questions
+        personal_keywords = [
+            "my project", "my previous", "what did i",
+            "remember", "my preference", "we discussed",
+            "our previous", "my college"
+        ]
+
+        needs_memory = any(w in q_lower for w in personal_keywords)
+
         is_multi_step = len(sources_needed) > 1 or any(
-            w in q_lower for w in ["and", "compare", "first", "related", "both"]
+            w in q_lower for w in ["compare", "first", "related", "both"]
         )
 
         timeline = list(state.get("timeline_events", []))
@@ -94,7 +118,10 @@ class AgentOrchestrator:
             "stage": "Query Understanding",
             "title": "Analyzed query intent and target sources",
             "status": "completed",
-            "details": f"Target sources: {', '.join(sources_needed)} | Multi-step: {is_multi_step}",
+            "details": (
+                f"Target sources: {', '.join(sources_needed) if sources_needed else 'General question'} "
+                f"| Multi-step: {is_multi_step}"
+            ),
             "duration_ms": round((time.time() - t0) * 1000, 2)
         })
 
@@ -102,7 +129,7 @@ class AgentOrchestrator:
             "query_understanding": {
                 "sources_needed": sources_needed,
                 "is_multi_step": is_multi_step,
-                "needs_memory": True
+                "needs_memory": needs_memory
             },
             "timeline_events": timeline
         }
